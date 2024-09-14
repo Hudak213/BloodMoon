@@ -1,0 +1,307 @@
+package org.kopter.main;
+
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Difficulty;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Sound;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
+import org.bukkit.entity.Creeper;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Monster;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.player.PlayerBedEnterEvent;
+import org.bukkit.event.weather.WeatherChangeEvent;
+import org.bukkit.inventory.EntityEquipment;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.Random;
+
+public class bloodmoon extends JavaPlugin implements Listener, CommandExecutor {
+
+    private boolean bloodMoonActive = false;
+    private BossBar bossBar;
+    private FileConfiguration bloodmoonConfig;
+    private FileConfiguration daysConfig;
+    private File bloodmoonFile;
+    private File daysFile;
+
+    @Override
+    public void onEnable() {
+        getLogger().info("BloodMoon plugin is starting...");
+
+        saveDefaultConfig(); // Save default config if not already present
+        loadCustomFiles(); // Load additional configuration files
+
+        getServer().getPluginManager().registerEvents(this, this);
+        getCommand("bloodmoon").setExecutor(this);
+
+        startBloodMoonCycle();
+
+        getLogger().info("BloodMoon plugin enabled.");
+    }
+
+    private void loadCustomFiles() {
+        bloodmoonFile = new File(getDataFolder(), "bloodmoon.yml");
+        if (!bloodmoonFile.exists()) {
+            saveResource("bloodmoon.yml", false);
+        }
+        bloodmoonConfig = YamlConfiguration.loadConfiguration(bloodmoonFile);
+
+        daysFile = new File(getDataFolder(), "days.yml");
+        if (!daysFile.exists()) {
+            saveResource("days.yml", false);
+        }
+        daysConfig = YamlConfiguration.loadConfiguration(daysFile);
+
+     
+    }
+
+    @Override
+    public void onDisable() {
+        if (bloodMoonActive) {
+            endBloodMoon();
+        }
+    }
+
+    private boolean isNightTime() {
+        long time = Bukkit.getWorlds().get(0).getTime();
+        return time >= getConfig().getLong("bloodmoon.start_time") && time <= getConfig().getLong("bloodmoon.end_time");
+    }
+
+    private void startBloodMoonCycle() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!bloodMoonActive && isNightTime() && shouldStartBloodMoon()) {
+                    startBloodMoon();
+                }
+                updateDay(); // Update day count every in-game day
+            }
+        }.runTaskTimer(this, 0, 24000); // Check every in-game day
+    }
+
+    private boolean shouldStartBloodMoon() {
+        int currentDay = getCurrentDay();
+        return currentDay == 10; // Blood Moon occurs every 10 days
+    }
+
+    private void startBloodMoon() {
+        if (bloodMoonActive) {
+            Bukkit.broadcastMessage(ChatColor.RED + "A Blood Moon is already active!");
+            return;
+        }
+
+        bloodMoonActive = true;
+        Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "Blood Moon is here! Difficulty set to HARD.");
+        Bukkit.getWorlds().forEach(world -> world.setDifficulty(Difficulty.HARD));
+
+        Bukkit.getOnlinePlayers().forEach(player -> player.sendTitle(
+                ChatColor.DARK_RED + "" + ChatColor.BOLD + "BLOOD MOON",
+                ChatColor.RED + "The monsters are stronger!", 10, 70, 20));
+
+        bossBar = Bukkit.createBossBar(ChatColor.RED + "Blood Moon", BarColor.RED, BarStyle.SOLID);
+        bossBar.setVisible(true);
+        Bukkit.getOnlinePlayers().forEach(player -> bossBar.addPlayer(player));
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (bloodMoonActive) {
+                    spawnBloodMoonMobs();
+                }
+            }
+        }.runTaskTimer(this, 0, 20 * 60); // Check every minute
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!isNightTime() && bloodMoonActive) {
+                    endBloodMoon();
+                }
+            }
+        }.runTaskTimer(this, 0, 20); // Check every second
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (bloodMoonActive) {
+                    endBloodMoon();
+                }
+            }
+        }.runTaskLater(this, 24000); // End after one in-game day
+
+        playBloodMoonEffects();
+    }
+
+    private void playBloodMoonEffects() {
+        if (getConfig().getBoolean("effects.red_moon")) {
+            // Simulate red moon effect (you may need to use a third-party library for graphical effects)
+        }
+
+        if (new Random().nextDouble() < getConfig().getDouble("effects.lightning_chance")) {
+            Bukkit.getWorlds().forEach(world -> world.getPlayers().forEach(player -> {
+                Location loc = player.getLocation();
+                world.strikeLightning(loc);
+            }));
+        }
+
+    }
+
+    private void spawnBloodMoonMobs() {
+        Bukkit.getWorlds().forEach(world -> world.getEntities().stream()
+                .filter(entity -> entity instanceof Monster)
+                .forEach(entity -> {
+                    Monster monster = (Monster) entity;
+                    double chance = new Random().nextDouble();
+                    if (chance < getConfig().getDouble("spawn.mutants")) {
+                        spawnMutantMonster(monster);
+                    } else if (chance < getConfig().getDouble("spawn.zombies")) {
+                        spawnZombies(world);
+                    } else if (chance < getConfig().getDouble("spawn.creepers")) {
+                        spawnCreeper(world.getSpawnLocation());
+                    } else if (chance < getConfig().getDouble("spawn.armored_mobs")) {
+                        spawnArmoredMonster(monster);
+                    }
+                }));
+    }
+
+    private void spawnZombies(org.bukkit.World world) {
+        for (int i = 0; i < 5; i++) {
+            world.spawnEntity(world.getSpawnLocation(), EntityType.ZOMBIE);
+        }
+    }
+
+    private void spawnCreeper(Location location) {
+        Creeper creeper = (Creeper) location.getWorld().spawnEntity(location, EntityType.CREEPER);
+        creeper.setMaxFuseTicks(40);
+    }
+
+    private void spawnArmoredMonster(Monster monster) {
+        Random rand = new Random();
+        EntityEquipment equipment = monster.getEquipment();
+        if (rand.nextInt(3) == 0) {
+            equipment.setHelmet(new ItemStack(Material.LEATHER_HELMET));
+        }
+        if (rand.nextInt(3) == 0) {
+            equipment.setChestplate(new ItemStack(Material.CHAINMAIL_CHESTPLATE));
+        }
+        if (rand.nextInt(3) == 0) {
+            equipment.setLeggings(new ItemStack(Material.CHAINMAIL_LEGGINGS));
+        }
+        if (rand.nextInt(3) == 0) {
+            equipment.setBoots(new ItemStack(Material.LEATHER_BOOTS));
+        }
+        if (rand.nextInt(3) == 0) {
+            equipment.setItemInMainHand(new ItemStack(Material.STONE_SWORD));
+        }
+    }
+
+    private void spawnMutantMonster(Monster monster) {
+        monster.setCustomName(ChatColor.DARK_RED + "Mutant");
+        monster.setCustomNameVisible(true);
+        monster.getAttribute(Attribute.GENERIC_MAX_HEALTH).setBaseValue(monster.getAttribute(Attribute.GENERIC_MAX_HEALTH).getBaseValue() * 2);
+        monster.setHealth(monster.getAttribute(Attribute.GENERIC_MAX_HEALTH).getBaseValue());
+
+        // Ensure mutants drop loot except armor
+        monster.getWorld().dropItemNaturally(monster.getLocation(), new ItemStack(Material.DIAMOND_SWORD));
+    }
+
+    private void endBloodMoon() {
+        bloodMoonActive = false;
+        Bukkit.broadcastMessage(ChatColor.GREEN + "The Blood Moon has ended. Difficulty set back to NORMAL.");
+        Bukkit.getWorlds().forEach(world -> world.setDifficulty(Difficulty.NORMAL));
+
+        Bukkit.getOnlinePlayers().forEach(player -> player.sendTitle(
+                ChatColor.GREEN + "" + ChatColor.BOLD + "Blood Moon Ended",
+                ChatColor.YELLOW + "The anomalies have ended!", 10, 70, 20));
+
+        if (bossBar != null) {
+            bossBar.removeAll();
+            bossBar = null;
+        }
+    }
+
+    @EventHandler
+    public void onPlayerBedEnter(PlayerBedEnterEvent event) {
+        if (bloodMoonActive) {
+            event.getPlayer().sendMessage(ChatColor.RED + "You cannot sleep during the Blood Moon!");
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onWeatherChange(WeatherChangeEvent event) {
+        if (bloodMoonActive) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onEntityDeath(EntityDeathEvent event) {
+        if (event.getEntity() instanceof Monster) {
+            event.getDrops().removeIf(item -> item.getType().toString().toLowerCase().contains("armor"));
+        }
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage("This command can only be executed by a player.");
+            return false;
+        }
+
+        Player player = (Player) sender;
+
+        if (args.length > 0 && args[0].equalsIgnoreCase("start")) {
+            if (player.isOp()) {
+                if (!bloodMoonActive) {
+                    Bukkit.getWorlds().forEach(world -> world.setTime(getConfig().getLong("bloodmoon.start_time")));
+                    startBloodMoon();
+                    return true;
+                } else {
+                    player.sendMessage(ChatColor.RED + "A Blood Moon is already active!");
+                }
+            } else {
+                player.sendMessage("You do not have permission to use this command!");
+            }
+        }
+
+        return false;
+    }
+
+    private int getCurrentDay() {
+        return daysConfig.getInt("current_day", 1);
+    }
+
+    private void updateDay() {
+        int currentDay = getCurrentDay();
+        daysConfig.set("current_day", currentDay + 1);
+        saveDaysConfig();
+    }
+
+    private void saveDaysConfig() {
+        try {
+            daysConfig.save(daysFile);
+        } catch (IOException e) {
+            getLogger().warning("Could not save days.yml");
+            e.printStackTrace();
+        }
+    }
+}
